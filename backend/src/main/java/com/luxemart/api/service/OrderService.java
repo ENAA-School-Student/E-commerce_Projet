@@ -84,11 +84,9 @@ public class OrderService {
                 if (variant.getStock() < itemReq.quantity()) {
                     throw new BadRequestException("Insufficient stock for " + product.getName());
                 }
+                variant.setStock(variant.getStock() - itemReq.quantity());
             } else {
-                int totalStock = product.getVariants().stream().mapToInt(ProductVariant::getStock).sum();
-                if (totalStock < itemReq.quantity()) {
-                    throw new BadRequestException("Insufficient stock for " + product.getName());
-                }
+                reserveAcrossVariants(product, itemReq.quantity());
             }
 
             OrderItem orderItem = OrderItem.builder()
@@ -106,10 +104,6 @@ public class OrderService {
 
             subtotal = subtotal.add(product.getPrice().multiply(BigDecimal.valueOf(itemReq.quantity())));
             orderItems.add(orderItem);
-
-            if (variant != null) {
-                variant.setStock(variant.getStock() - itemReq.quantity());
-            }
         }
 
         BigDecimal shipping = subtotal.compareTo(FREE_SHIPPING_THRESHOLD) >= 0 ? BigDecimal.ZERO : SHIPPING_COST;
@@ -175,6 +169,29 @@ public class OrderService {
     private String generateOrderNumber() {
         return "LX-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"))
             + "-" + UUID.randomUUID().toString().substring(0, 6).toUpperCase();
+    }
+
+    /**
+     * Reserves {@code quantity} units across a product's active variants when the order line
+     * does not target a specific variant. Runs inside the checkout transaction, so a shortfall
+     * rolls back any partial reservation.
+     */
+    private void reserveAcrossVariants(Product product, int quantity) {
+        int remaining = quantity;
+        for (ProductVariant variant : product.getVariants()) {
+            if (remaining <= 0) {
+                break;
+            }
+            if (!Boolean.TRUE.equals(variant.getActive()) || variant.getStock() <= 0) {
+                continue;
+            }
+            int take = Math.min(variant.getStock(), remaining);
+            variant.setStock(variant.getStock() - take);
+            remaining -= take;
+        }
+        if (remaining > 0) {
+            throw new BadRequestException("Insufficient stock for " + product.getName());
+        }
     }
 
     private OrderResponse toResponse(Order order) {

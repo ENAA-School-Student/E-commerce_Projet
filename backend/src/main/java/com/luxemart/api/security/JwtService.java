@@ -3,6 +3,7 @@ package com.luxemart.api.security;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
@@ -16,11 +17,26 @@ import java.util.function.Function;
 @Service
 public class JwtService {
 
+    private static final int MIN_SECRET_BYTES = 32; // HS256 requires a >= 256-bit key
+
     @Value("${jwt.secret}")
     private String secret;
 
     @Value("${jwt.expiration-ms}")
     private long expirationMs;
+
+    @PostConstruct
+    void validateSecret() {
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalStateException(
+                "jwt.secret is not set. Provide a JWT_SECRET environment variable (min "
+                + MIN_SECRET_BYTES + " bytes).");
+        }
+        if (secret.getBytes(java.nio.charset.StandardCharsets.UTF_8).length < MIN_SECRET_BYTES) {
+            throw new IllegalStateException(
+                "jwt.secret is too short: HS256 requires at least " + MIN_SECRET_BYTES + " bytes.");
+        }
+    }
 
     public String extractUsername(String token) {
         return extractClaim(token, Claims::getSubject);
