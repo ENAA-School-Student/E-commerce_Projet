@@ -38,7 +38,8 @@ public class SecurityConfig {
 
     private static final String[] PUBLIC_GET_ENDPOINTS = {
         "/api/products/**",
-        "/api/categories/**"
+        "/api/categories/**",
+        "/api/config"
     };
 
     private static final String[] PUBLIC_POST_ENDPOINTS = {

@@ -8,6 +8,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -52,6 +53,13 @@ public class GlobalExceptionHandler {
         body.put("errors", fieldErrors);
         body.put("timestamp", LocalDateTime.now());
         return ResponseEntity.badRequest().body(body);
+    }
+
+    // Without this, Spring's unmapped-path exception falls into the Exception handler below as a 500.
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNoResource(NoResourceFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+            .body(new ErrorResponse(HttpStatus.NOT_FOUND.value(), "Resource not found", LocalDateTime.now()));
     }
 
     @ExceptionHandler(Exception.class)

@@ -122,6 +122,15 @@ public class UserService {
         addressRepository.delete(address);
     }
 
+    @Transactional
+    public void awardLoyaltyPoints(Long userId, int points) {
+        if (points <= 0) return;
+        User user = getUserById(userId);
+        int current = user.getLoyaltyPoints() == null ? 0 : user.getLoyaltyPoints();
+        user.setLoyaltyPoints(current + points);
+        userRepository.save(user);
+    }
+
     private Address getAddressForUser(Long userId, Long addressId) {
         return addressRepository.findById(addressId)
             .filter(a -> a.getUser().getId().equals(userId))

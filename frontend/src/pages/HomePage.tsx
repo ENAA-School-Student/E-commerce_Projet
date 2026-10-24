@@ -1,149 +1,292 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight } from 'lucide-react';
-import { products as productsApi, categories as categoriesApi } from '@/lib/api';
-import { Product, Category } from '@/types';
+import toast from 'react-hot-toast';
+import Icon from '@/components/Icon';
+import ProductCard, { ProductCardSkeleton } from '@/components/ProductCard';
+import Reveal from '@/components/Reveal';
+import SmartImage from '@/components/SmartImage';
+import { Eyebrow, SectionHeading } from '@/components/Primitives';
+import { categories as categoriesApi, products as productsApi } from '@/lib/api';
+import { useCart } from '@/context/CartContext';
+import { useStoreConfig } from '@/hooks/useStoreConfig';
+import { useRecentlyViewed } from '@/hooks/useRecentlyViewed';
+import { Category, Product } from '@/types';
+import { formatMoney } from '@/lib/format';
 
 export default function HomePage() {
+  const config = useStoreConfig();
+  const { addToCart } = useCart();
+  const { items: recent } = useRecentlyViewed();
   const [featured, setFeatured] = useState<Product[]>([]);
+  const [arrivals, setArrivals] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.all([
-      productsApi.featured(0, 6),
+      productsApi.featured(0, 8),
+      productsApi.list({ sort: 'createdAt,desc', size: 6 }),
       categoriesApi.list(),
-    ]).then(([p, c]) => {
-      setFeatured(p.data.content);
-      setCategories(c.data.filter((cat: Category) => !cat.parentId));
-    }).finally(() => setLoading(false));
+    ])
+      .then(([featuredRes, arrivalsRes, categoriesRes]) => {
+        setFeatured(featuredRes.data.content);
+        setArrivals(arrivalsRes.data.content);
+        setCategories(categoriesRes.data.filter((category: Category) => !category.parentId));
+      })
+      .finally(() => setLoading(false));
   }, []);
 
+  const quickAdd = async (product: Product) => {
+    const variant = product.variants?.find((v) => v.stock > 0);
+    if (!variant) {
+      toast.error('Sold out in every size');
+      return;
+    }
+    await addToCart(product.id, 1, variant.id);
+  };
+
+  const hero = arrivals[0] ?? featured[0];
+
   return (
-    <div className="min-h-screen">
+    <div className="mx-auto max-w-[1400px] px-margin-mobile sm:px-margin-tablet lg:px-margin-desktop">
       {/* Hero */}
-      <section className="relative h-[90vh] bg-charcoal flex items-center overflow-hidden">
-        <div className="absolute inset-0">
-          <img
-            src="https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=1920&auto=format&fit=crop"
-            alt="LUXEMART"
-            className="w-full h-full object-cover opacity-40"
-          />
-        </div>
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
-          <div className="max-w-xl">
-            <p className="text-white/50 text-sm tracking-widest-xl uppercase mb-4 font-body">FW Collection 2024</p>
-            <h1 className="font-display text-display-xl text-white mb-6">
-              The Art of<br />Refined Living
-            </h1>
-            <p className="text-white/60 text-lg font-light mb-10 max-w-md leading-relaxed">
-              Curated essentials where form follows function. Each piece selected for its craft, material, and enduring beauty.
-            </p>
-            <div className="flex flex-wrap gap-4">
-              <Link to="/products?category=women" className="bg-primary hover:bg-primary/90 text-white px-8 py-3 text-sm font-medium tracking-wide transition-colors">
-                Shop Women
-              </Link>
-              <Link to="/products?category=men" className="border border-white/30 hover:border-white text-white px-8 py-3 text-sm font-medium tracking-wide transition-colors">
-                Shop Men
-              </Link>
+      <section className="relative -mx-margin-mobile overflow-hidden bg-surface-container sm:mx-0 sm:rounded-2xl">
+        <div className="relative h-[78vh] min-h-[520px] w-full">
+          {hero?.images?.[0]?.imageUrl ? (
+            <SmartImage
+              src={hero.images[0].imageUrl}
+              alt={hero.name}
+              monogram="LUXEMART"
+              eager
+              className="h-full w-full"
+              imgClassName="animate-ken-burns"
+            />
+          ) : (
+            <div className="h-full w-full bg-surface-container-high" />
+          )}
+          <div className="absolute inset-0 bg-gradient-to-t from-on-surface/90 via-on-surface/35 to-transparent" />
+          <div className="absolute inset-x-0 bottom-0 px-margin-mobile pb-space-2xl sm:px-space-2xl">
+            <div className="max-w-2xl">
+              <Eyebrow className="mb-space-xs text-primary-fixed">{hero?.collection ?? 'Autumn-Winter Atelier'}</Eyebrow>
+              <h1 className="font-display text-display-hero-mobile text-on-primary sm:text-display-hero">
+                Objects of<br className="hidden sm:block" /> quiet permanence
+              </h1>
+              <p className="mt-space-md max-w-md text-body-lg text-surface-container-high">
+                Natural fibres, architectural cuts, and small-batch craft — assembled twice a season.
+              </p>
+              <div className="mt-space-lg flex flex-wrap gap-space-sm">
+                <Link to="/products" className="btn-primary bg-primary-container text-on-primary-container">
+                  Shop now
+                  <Icon name="arrow_forward" className="text-lg" />
+                </Link>
+                <Link to="/products?category=accessories" className="btn-tonal border border-inverse-on-surface/30 bg-transparent text-inverse-on-surface hover:bg-inverse-on-surface/10">
+                  The accessories edit
+                </Link>
+              </div>
             </div>
           </div>
         </div>
       </section>
 
+      {/* Best sellers */}
+      <Reveal>
+      <section className="py-space-xl">
+        <SectionHeading
+          eyebrow="Iconic pieces"
+          title="Best sellers"
+          action={{ label: 'View all', to: '/products' }}
+          className="mb-space-md"
+        />
+        {loading ? (
+          <div className="grid grid-cols-2 gap-space-sm lg:grid-cols-4">
+            {[1, 2, 3, 4].map((key) => (
+              <ProductCardSkeleton key={key} />
+            ))}
+          </div>
+        ) : (
+          <>
+            <div className="no-scrollbar -mx-margin-mobile flex snap-x snap-mandatory gap-space-sm overflow-x-auto px-margin-mobile pb-space-xs sm:hidden">
+              {featured.slice(0, 6).map((product) => (
+                <ProductCard
+                  key={product.id}
+                  product={product}
+                  currency={config.currency}
+                  lowStockThreshold={config.lowStockThreshold}
+                  onQuickAdd={quickAdd}
+                  className="w-[240px] shrink-0 snap-start"
+                />
+              ))}
+            </div>
+            <div className="hidden grid-cols-2 gap-space-lg lg:grid-cols-4">
+              {featured.slice(0, 4).map((product) => (
+                <ProductCard
+                  key={product.id}
+                  product={product}
+                  currency={config.currency}
+                  lowStockThreshold={config.lowStockThreshold}
+                  showStock
+                  onQuickAdd={quickAdd}
+                />
+              ))}
+            </div>
+          </>
+        )}
+      </section>
+      </Reveal>
+
       {/* Categories */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24">
-        <p className="text-muted text-xs tracking-widest-xl uppercase mb-3">Browse by</p>
-        <h2 className="font-display text-display-md mb-12">Collections</h2>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {categories.map((cat) => (
-            <Link key={cat.id} to={`/products?category=${cat.slug}`} className="group relative aspect-[4/5] overflow-hidden bg-light">
-              {cat.imageUrl && (
-                <img src={cat.imageUrl} alt={cat.name} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
-              )}
-              <div className="absolute inset-0 bg-gradient-to-t from-charcoal/60 to-transparent" />
-              <div className="absolute bottom-0 left-0 p-6">
-                <h3 className="font-display text-white text-xl mb-1">{cat.name}</h3>
-                <p className="text-white/60 text-xs tracking-wide">{cat.productCount} pieces</p>
+      <Reveal delay={80}>
+      <section className="py-space-md">
+        <div className="mb-space-md">
+          <Eyebrow className="mb-space-2xs text-primary-container">Collections</Eyebrow>
+          <h2 className="font-display text-headline-md">Shop by category</h2>
+        </div>
+        <div className="grid grid-cols-2 gap-space-xs sm:gap-space-sm lg:grid-cols-4">
+          {categories.map((category) => (
+            <Link
+              key={category.id}
+              to={`/products?category=${category.slug}`}
+              className="group relative flex h-40 flex-col justify-end overflow-hidden rounded-xl p-space-sm lg:h-56"
+            >
+              <SmartImage
+                src={category.imageUrl}
+                alt={category.name}
+                monogram={category.name}
+                className="absolute inset-0 h-full w-full bg-transparent"
+                imgClassName="transition-transform duration-500 group-hover:scale-105"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-on-surface/85 via-on-surface/20 to-transparent" />
+              <div className="relative z-10">
+                <span className="block font-display text-headline-sm text-on-primary transition-colors group-hover:text-primary-fixed">
+                  {category.name}
+                </span>
+                <span className="eyebrow text-[10px] text-surface-container-high">{category.productCount} items</span>
               </div>
             </Link>
           ))}
         </div>
       </section>
+      </Reveal>
 
-      {/* Featured Products */}
-      <section className="bg-light">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24">
-          <div className="flex items-end justify-between mb-12">
+      {/* Recently viewed */}
+      {!loading && recent.length > 0 && (
+        <Reveal delay={60}>
+        <section className="py-space-md">
+          <div className="mb-space-md flex items-baseline justify-between gap-space-md">
             <div>
-              <p className="text-muted text-xs tracking-widest-xl uppercase mb-3">Editor's pick</p>
-              <h2 className="font-display text-display-md">Featured</h2>
+              <Eyebrow className="mb-space-2xs text-primary-container">Your trail</Eyebrow>
+              <h2 className="font-display text-headline-md">Recently viewed</h2>
             </div>
-            <Link to="/products" className="text-sm font-medium flex items-center gap-2 hover:text-primary transition-colors group">
-              View all <ArrowRight size={14} className="transition-transform group-hover:translate-x-1" />
+            <Link to="/products" className="text-label-caps uppercase tracking-widest text-primary transition-colors hover:text-primary-container">
+              Browse all
             </Link>
           </div>
+          <div className="no-scrollbar -mx-margin-mobile flex gap-space-sm overflow-x-auto px-margin-mobile pb-space-xs sm:mx-0 sm:px-0">
+            {recent.map((product) => (
+              <ProductCard
+                key={`recent-${product.id}`}
+                product={product}
+                variant="mini"
+                currency={config.currency}
+                className="w-64 shrink-0 rounded-xl border border-outline-variant/30"
+              />
+            ))}
+          </div>
+        </section>
+        </Reveal>
+      )}
 
-          {loading ? (
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-6">
-              {[1,2,3,4,5,6].map((i) => (
-                <div key={i} className="animate-pulse">
-                  <div className="aspect-[3/4] bg-muted/20 mb-3" />
-                  <div className="h-4 bg-muted/20 w-2/3 mb-2" />
-                  <div className="h-3 bg-muted/20 w-1/3" />
-                </div>
-              ))}
+      {/* Editorial spotlight */}
+      <Reveal delay={100}>
+      {!loading && arrivals.length > 0 && (
+        <section className="py-space-md">
+          <div className="mb-space-md flex items-baseline justify-between gap-space-md">
+            <div>
+              <Eyebrow className="mb-space-2xs text-primary-container">Editorial feature</Eyebrow>
+              <h2 className="font-display text-headline-md">New arrivals</h2>
             </div>
-          ) : (
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-6">
-              {featured.map((product) => (
-                <Link key={product.id} to={`/product/${product.slug}`} className="group">
-                  <div className="relative aspect-[3/4] overflow-hidden bg-light mb-3">
-                    <img
-                      src={product.images[0]?.imageUrl}
-                      alt={product.name}
-                      className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-                    />
-                    {product.compareAtPrice && (
-                      <span className="absolute top-3 left-3 bg-charcoal text-white text-[10px] px-2 py-1 tracking-wide uppercase">Sale</span>
-                    )}
-                  </div>
-                  <h3 className="text-sm font-medium text-charcoal mb-1 group-hover:text-primary transition-colors">{product.name}</h3>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">${product.price.toFixed(2)}</span>
-                    {product.compareAtPrice && (
-                      <span className="text-sm text-muted line-through">${product.compareAtPrice.toFixed(2)}</span>
-                    )}
-                  </div>
+            <span className="rounded bg-primary-container px-space-xs py-1 text-label-caps uppercase text-on-primary">
+              New in
+            </span>
+          </div>
+
+          <div className="mb-space-sm flex flex-col overflow-hidden rounded-2xl bg-surface-container-lowest shadow-card lg:flex-row">
+            <div className="relative h-64 w-full lg:h-80 lg:w-2/3">
+              <SmartImage
+                src={arrivals[0].images?.[0]?.imageUrl}
+                alt={arrivals[0].name}
+                monogram={arrivals[0].name}
+                className="h-full w-full"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-on-surface/90 via-transparent to-transparent" />
+              <div className="absolute inset-x-0 bottom-0 p-space-md">
+                <Eyebrow className="mb-space-2xs text-primary-fixed">{arrivals[0].categoryName}</Eyebrow>
+                <h3 className="font-display text-headline-lg text-on-primary">{arrivals[0].name}</h3>
+              </div>
+            </div>
+            <div className="flex flex-1 flex-col justify-between gap-space-md p-space-md">
+              <p className="text-body-md text-on-surface-variant">
+                {arrivals[0].description ?? 'Fresh from the atelier, cut in this season’s fabrications.'}
+              </p>
+              <div className="flex items-center justify-between">
+                <span className="font-display text-headline-sm">{formatMoney(arrivals[0].price, config.currency)}</span>
+                <Link to={`/product/${arrivals[0].slug}`} className="btn-tonal">
+                  Explore
+                  <Icon name="arrow_forward" className="text-base" />
                 </Link>
-              ))}
+              </div>
             </div>
-          )}
-        </div>
-      </section>
-
-      {/* Banner */}
-      <section className="relative h-[60vh] flex items-center overflow-hidden">
-        <div className="absolute inset-0">
-          <img
-            src="https://images.unsplash.com/photo-1505740420928-5e560c06d30e?q=80&w=1920&auto=format&fit=crop"
-            alt="LUXEMART Atelier"
-            className="w-full h-full object-cover"
-          />
-        </div>
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
-          <div className="max-w-lg bg-cream/95 backdrop-blur-sm p-10">
-            <p className="text-muted text-xs tracking-widest-xl uppercase mb-3">New Season</p>
-            <h2 className="font-display text-display-sm mb-4">The Atelier Edit</h2>
-            <p className="text-sm text-charcoal/70 font-light mb-6 leading-relaxed">
-              Hand-selected pieces from our workshop. Limited quantities, crafted with intention.
-            </p>
-            <Link to="/products" className="inline-flex bg-charcoal text-white px-8 py-3 text-sm font-medium tracking-wide hover:bg-charcoal/90 transition-colors">
-              Explore Collection
-            </Link>
           </div>
+
+          <div className="grid grid-cols-2 gap-space-sm lg:grid-cols-4">
+            {arrivals.slice(1, 5).map((product) => (
+              <ProductCard
+                key={product.id}
+                product={product}
+                currency={config.currency}
+                lowStockThreshold={config.lowStockThreshold}
+                onQuickAdd={quickAdd}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+      </Reveal>
+
+      {/* Value props */}
+      <Reveal delay={120}>
+      <section className="py-space-md">
+        <div className="space-y-space-md rounded-2xl bg-surface-container-low p-space-lg shadow-card lg:grid lg:grid-cols-3 lg:space-y-0">
+          {[
+            {
+              icon: 'local_shipping',
+              title: 'Complimentary carbon-neutral shipping',
+              body: `On every order over ${formatMoney(config.freeShippingThreshold, config.currency)}.`,
+            },
+            {
+              icon: 'architecture',
+              title: 'Handcrafted in small batches',
+              body: 'Partnering with multi-generational artisan workshops.',
+            },
+            {
+              icon: 'sync_alt',
+              title: '30-day effortless returns',
+              body: 'Pre-paid labels and frictionless doorstep collection.',
+            },
+          ].map((item) => (
+            <div key={item.title} className="flex items-start gap-space-md">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-container-lowest text-primary-container shadow-sm">
+                <Icon name={item.icon} className="text-xl" />
+              </span>
+              <div>
+                <h4 className="text-body-md font-semibold leading-tight">{item.title}</h4>
+                <p className="mt-space-2xs text-body-sm text-on-surface-variant">{item.body}</p>
+              </div>
+            </div>
+          ))}
         </div>
       </section>
+      </Reveal>
     </div>
   );
 }

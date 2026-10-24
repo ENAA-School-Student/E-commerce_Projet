@@ -34,6 +34,8 @@ public class Product {
     @Column(precision = 10, scale = 2)
     private BigDecimal compareAtPrice;
 
+    private String badge;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "category_id")
     private Category category;

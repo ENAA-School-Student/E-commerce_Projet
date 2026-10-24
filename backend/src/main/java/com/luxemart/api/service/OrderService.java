@@ -1,5 +1,6 @@
 package com.luxemart.api.service;
 
+import com.luxemart.api.config.StoreProperties;
 import com.luxemart.api.dto.AddressDTO;
 import com.luxemart.api.dto.CheckoutRequest;
 import com.luxemart.api.dto.OrderResponse;
@@ -31,14 +32,11 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class OrderService {
 
-    private static final BigDecimal FREE_SHIPPING_THRESHOLD = new BigDecimal("150.00");
-    private static final BigDecimal SHIPPING_COST = new BigDecimal("9.90");
-    private static final BigDecimal TAX_RATE = new BigDecimal("0.20");
-
     private final OrderRepository orderRepository;
     private final ProductService productService;
     private final UserService userService;
     private final CartService cartService;
+    private final StoreProperties storeProperties;
 
     public PageResponse<OrderResponse> getUserOrders(Long userId, int page, int size) {
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
@@ -106,8 +104,9 @@ public class OrderService {
             orderItems.add(orderItem);
         }
 
-        BigDecimal shipping = subtotal.compareTo(FREE_SHIPPING_THRESHOLD) >= 0 ? BigDecimal.ZERO : SHIPPING_COST;
-        BigDecimal tax = subtotal.multiply(TAX_RATE).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal shipping = subtotal.compareTo(storeProperties.getFreeShippingThreshold()) >= 0
+            ? BigDecimal.ZERO : storeProperties.getShippingCost();
+        BigDecimal tax = subtotal.multiply(storeProperties.getTaxRate()).setScale(2, RoundingMode.HALF_UP);
         BigDecimal total = subtotal.add(shipping).add(tax);
 
         Order order = Order.builder()
@@ -136,6 +135,7 @@ public class OrderService {
         orderItems.forEach(item -> item.setOrder(order));
 
         Order saved = orderRepository.save(order);
+        userService.awardLoyaltyPoints(userId, saved.getTotal().setScale(0, RoundingMode.DOWN).intValue() / 10);
 
         if (Boolean.TRUE.equals(request.saveAddress())) {
             userService.addAddress(userId, new AddressDTO(

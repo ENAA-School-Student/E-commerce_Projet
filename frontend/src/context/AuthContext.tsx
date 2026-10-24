@@ -1,12 +1,13 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { User } from '@/types';
-import { auth as authApi } from '@/lib/api';
+import { auth as authApi, users as usersApi } from '@/lib/api';
 
 interface AuthContextType {
   user: User | null;
   token: string | null;
   login: (email: string, password: string) => Promise<void>;
   register: (data: { firstName: string; lastName: string; email: string; password: string; phone?: string }) => Promise<void>;
+  refreshUser: () => Promise<void>;
   logout: () => void;
   isAdmin: boolean;
   loading: boolean;
@@ -47,6 +48,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(u);
   }, []);
 
+  const refreshUser = useCallback(async () => {
+    const res = await usersApi.me();
+    localStorage.setItem('user', JSON.stringify(res.data));
+    setUser(res.data);
+  }, []);
+
   const logout = useCallback(() => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
@@ -57,7 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isAdmin = user?.roles?.includes('ROLE_ADMIN') ?? false;
 
   return (
-    <AuthContext.Provider value={{ user, token, login, register, logout, isAdmin, loading }}>
+    <AuthContext.Provider value={{ user, token, login, register, refreshUser, logout, isAdmin, loading }}>
       {children}
     </AuthContext.Provider>
   );

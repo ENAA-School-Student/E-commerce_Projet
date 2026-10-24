@@ -12,6 +12,7 @@ public record UserResponse(
     String email,
     String phone,
     String avatarUrl,
+    Integer loyaltyPoints,
     Boolean enabled,
     Set<String> roles,
     LocalDateTime createdAt
@@ -24,6 +25,7 @@ public record UserResponse(
             user.getEmail(),
             user.getPhone(),
             user.getAvatarUrl(),
+            user.getLoyaltyPoints() == null ? 0 : user.getLoyaltyPoints(),
             user.getEnabled(),
             user.getRoles().stream().map(r -> r.getName().name()).collect(java.util.stream.Collectors.toSet()),
             user.getCreatedAt()

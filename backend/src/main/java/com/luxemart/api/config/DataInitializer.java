@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.Map;
 import java.util.Set;
 
 @Component
@@ -33,6 +34,7 @@ public class DataInitializer implements CommandLineRunner {
         seedUsers();
         seedCategories();
         seedProducts();
+        assignBadges();
         log.info("LUXEMART data initialization completed");
     }
 
@@ -68,6 +70,7 @@ public class DataInitializer implements CommandLineRunner {
                 .email("demo@luxemart.com")
                 .password(passwordEncoder.encode("demo123"))
                 .phone("+33 6 12 34 56 78")
+                .loyaltyPoints(1450)
                 .enabled(true)
                 .roles(Set.of(customerRole))
                 .build());
@@ -193,9 +196,26 @@ public class DataInitializer implements CommandLineRunner {
         createProduct(
             "Alpaca Throw Blanket", "A cloud-soft alpaca throw, loom-woven in small batches.",
             new BigDecimal("139.00"), null, home, "LUXEMART", "Home Objects", true,
-            "https://images.unsplash.com/photo-1580301762395-24ce84d3022e?q=80&w=1200&auto=format&fit=crop",
+            "https://i.pinimg.com/originals/19/1d/6f/191d6f8b8696d666a28324b90c944d16.jpg",
             new String[][]{{"One Size", "Oat", "#E7DFCE", "20"}}
         );
+    }
+
+    private void assignBadges() {
+        Map<String, String> badges = Map.of(
+            "Oversized Wool Blend Coat", "Bestseller",
+            "Ribbed Merino Turtleneck", "New",
+            "Structured Leather Tote", "Limited",
+            "Quad-Buckle Chelsea Boot", "Bestseller",
+            "Silk Twill Scarf", "Sustainable"
+        );
+        for (Product product : productRepository.findAll()) {
+            String badge = badges.get(product.getName());
+            if (badge != null && product.getBadge() == null) {
+                product.setBadge(badge);
+                productRepository.save(product);
+            }
+        }
     }
 
     private void createProduct(String name, String description, BigDecimal price, BigDecimal compareAt,
@@ -239,7 +259,7 @@ public class DataInitializer implements CommandLineRunner {
             .build());
         product.getImages().add(ProductImage.builder()
             .product(product)
-            .imageUrl(imageUrl + "&t=" + System.currentTimeMillis())
+            .imageUrl(imageUrl + (imageUrl.contains("?") ? "&" : "?") + "t=" + System.currentTimeMillis())
             .altText(name + " detail")
             .isPrimary(false)
             .sortOrder(imageSort)

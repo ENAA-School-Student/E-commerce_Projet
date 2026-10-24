@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { AuthResponse } from '@/types';
+import { Address, AuthResponse, StoreConfig } from '@/types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -27,6 +27,10 @@ api.interceptors.response.use(
     return Promise.reject(err);
   }
 );
+
+export const store = {
+  config: () => api.get<StoreConfig>('/config'),
+};
 
 export const auth = {
   login: (email: string, password: string) =>
@@ -73,10 +77,8 @@ export const users = {
   update: (data: Record<string, unknown>) =>
     api.put('/users/me', data),
   addresses: () => api.get('/users/me/addresses'),
-  addAddress: (data: Record<string, unknown>) =>
-    api.post('/users/me/addresses', data),
-  updateAddress: (id: number, data: Record<string, unknown>) =>
-    api.put(`/users/me/addresses/${id}`, data),
+  addAddress: (data: Address) => api.post('/users/me/addresses', data),
+  updateAddress: (id: number, data: Address) => api.put(`/users/me/addresses/${id}`, data),
   deleteAddress: (id: number) =>
     api.delete(`/users/me/addresses/${id}`),
 };

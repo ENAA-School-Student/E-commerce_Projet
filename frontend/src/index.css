@@ -3,17 +3,166 @@
 @tailwind utilities;
 
 @layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-surface font-body text-on-surface antialiased;
+    min-height: max(884px, 100dvh);
+  }
+
   ::selection {
-    @apply bg-primary/20 text-charcoal;
+    @apply bg-primary-container/25 text-on-surface;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary ring-offset-2 ring-offset-surface;
+  }
+
+  .material-symbols-outlined {
+    font-family: 'Material Symbols Outlined';
+    font-weight: normal;
+    font-style: normal;
+    line-height: 1;
+    letter-spacing: normal;
+    text-transform: none;
+    display: inline-block;
+    white-space: nowrap;
+    word-wrap: normal;
+    direction: ltr;
+    font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
   }
 }
 
 @layer components {
-  .material-symbols-outlined {
-    font-variation-settings:
-      'FILL' 0,
-      'wght' 300,
-      'GRAD' 0,
-      'opsz' 24;
+  .eyebrow {
+    @apply font-body text-label-caps uppercase text-on-surface-variant;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .field {
+    @apply w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-gutter-mobile py-space-sm text-body-md text-on-surface placeholder:text-outline transition-colors focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-space-xs rounded-lg bg-primary px-space-lg py-space-sm text-body-md font-medium text-on-primary transition-all active:scale-[0.98] disabled:bg-surface-dim disabled:text-outline;
+  }
+
+  .btn-inverse {
+    @apply inline-flex items-center justify-center gap-space-xs rounded-lg bg-on-surface px-space-lg py-space-sm text-body-md font-medium text-inverse-on-surface transition-all active:scale-[0.98] hover:bg-inverse-surface;
+  }
+
+  .btn-tonal {
+    @apply inline-flex items-center justify-center gap-space-xs rounded-lg bg-surface-container-high px-space-lg py-space-sm text-body-md font-medium text-on-surface transition-all active:scale-[0.98] hover:bg-surface-container-highest;
+  }
+
+  .card {
+    @apply rounded-xl bg-surface-container-lowest shadow-card;
+  }
+}
+
+@layer utilities {
+  .reveal {
+    animation: reveal 0.5s ease-out both;
+  }
+
+  .bg-shimmer {
+    background: linear-gradient(
+      100deg,
+      theme('colors.surface-container') 30%,
+      theme('colors.surface-container-high') 50%,
+      theme('colors.surface-container') 70%
+    );
+    background-size: 220% 100%;
+  }
+
+  .animate-shimmer {
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+
+  .animate-badge-pop {
+    animation: badge-pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .animate-ken-burns {
+    animation: ken-burns 18s ease-in-out infinite alternate;
+  }
+
+  .page-fade {
+    animation: page-fade 0.4s ease-out both;
+  }
+
+  /* Lift bottom toasts clear of the mobile tab bar. */
+  [data-position*='bottom'] {
+    bottom: 5.25rem;
+  }
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 180% 0;
+  }
+  to {
+    background-position: -80% 0;
+  }
+}
+
+@keyframes badge-pop {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.45);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes ken-burns {
+  from {
+    transform: scale(1) translateY(0);
+  }
+  to {
+    transform: scale(1.07) translateY(-1.5%);
+  }
+}
+
+@keyframes page-fade {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }

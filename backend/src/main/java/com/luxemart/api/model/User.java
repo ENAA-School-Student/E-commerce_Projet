@@ -34,6 +34,9 @@ public class User {
 
     private String avatarUrl;
 
+    @Builder.Default
+    private Integer loyaltyPoints = 0;
+
     @Column(nullable = false)
     @Builder.Default
     private Boolean enabled = true;

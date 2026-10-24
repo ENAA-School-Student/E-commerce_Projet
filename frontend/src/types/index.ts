@@ -5,9 +5,18 @@ export interface User {
   email: string;
   phone?: string;
   avatarUrl?: string;
+  loyaltyPoints: number;
   enabled: boolean;
   roles: string[];
   createdAt: string;
+}
+
+export interface StoreConfig {
+  freeShippingThreshold: number;
+  shippingCost: number;
+  taxRate: number;
+  lowStockThreshold: number;
+  currency: string;
 }
 
 export interface AuthResponse {
@@ -56,6 +65,7 @@ export interface Product {
   categoryName?: string;
   brand?: string;
   collection?: string;
+  badge?: string | null;
   featured: boolean;
   active: boolean;
   variants: ProductVariant[];

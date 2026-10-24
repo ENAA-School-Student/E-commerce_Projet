@@ -14,6 +14,7 @@ public record ProductResponse(
     String categoryName,
     String brand,
     String collection,
+    String badge,
     Boolean featured,
     Boolean active,
     List<VariantResponse> variants,

@@ -1,177 +1,377 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { products as productsApi, categories as categoriesApi } from '@/lib/api';
-import { Product, Category, PageResponse } from '@/types';
-import { SlidersHorizontal, X, ChevronDown, Grid3X3, LayoutGrid } from 'lucide-react';
+import clsx from 'clsx';
+import toast from 'react-hot-toast';
+import Icon from '@/components/Icon';
+import ProductCard, { ProductCardSkeleton } from '@/components/ProductCard';
+import { Chip, Eyebrow, ProgressBar } from '@/components/Primitives';
+import { categories as categoriesApi, products as productsApi } from '@/lib/api';
+import { useCart } from '@/context/CartContext';
+import { useStoreConfig } from '@/hooks/useStoreConfig';
+import { Category, PageResponse, Product } from '@/types';
+
+const SORTS: Record<string, string> = {
+  featured: 'createdAt,desc',
+  'price-asc': 'price,asc',
+  'price-desc': 'price,desc',
+  name: 'name,asc',
+};
+
+const PRICE_BANDS = [
+  { label: 'Under 100', min: 0, max: 100 },
+  { label: '100 — 200', min: 100, max: 200 },
+  { label: 'Over 200', min: 200, max: undefined },
+];
 
 export default function ProductListingPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const [products, setProducts] = useState<Product[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [pageData, setPageData] = useState<PageResponse<Product> | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [gridCols, setGridCols] = useState<2 | 3>(3);
+  const [params, setParams] = useSearchParams();
+  const config = useStoreConfig();
+  const { addToCart } = useCart();
 
-  const categorySlug = searchParams.get('category');
-  const search = searchParams.get('search');
-  const sortBy = searchParams.get('sort') || 'createdAt,desc';
-  const currentPage = parseInt(searchParams.get('page') || '0');
+  const categorySlug = params.get('category') ?? '';
+  const search = params.get('search') ?? '';
+  const sort = params.get('sort') ?? 'featured';
+  const bandIndex = params.get('band');
+
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [page, setPage] = useState<PageResponse<Product> | null>(null);
+  const [items, setItems] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sizes, setSizes] = useState<string[]>([]);
+  const [colors, setColors] = useState<string[]>([]);
 
   useEffect(() => {
     categoriesApi.list().then((res) => setCategories(res.data));
   }, []);
 
+  const category = useMemo(
+    () => categories.find((c) => c.slug === categorySlug),
+    [categories, categorySlug],
+  );
+  const band = bandIndex === null || bandIndex === undefined ? null : PRICE_BANDS[Number(bandIndex)];
+
+  const load = useCallback(
+    async (next: number, replace: boolean) => {
+      setLoading(true);
+      try {
+        const res = await productsApi.list({
+          page: next,
+          size: 12,
+          sort: SORTS[sort] ?? SORTS.featured,
+          categoryId: category?.id,
+          search: search || undefined,
+          minPrice: band?.min,
+          maxPrice: band?.max,
+        });
+        setItems((prev) => (replace ? res.data.content : [...prev, ...res.data.content]));
+        setPage(res.data);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [band?.max, band?.min, category?.id, search, sort],
+  );
+
   useEffect(() => {
-    setLoading(true);
-    const params: Record<string, string | number | undefined> = {
-      page: currentPage,
-      size: 12,
-      sort: sortBy,
-    };
+    setItems([]);
+    load(0, true);
+  }, [load]);
 
-    if (categorySlug) {
-      const cat = categories.find((c) => c.slug === categorySlug);
-      if (cat) params.categoryId = cat.id;
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+  }, [categorySlug, search, sort, bandIndex]);
+
+  const visible = items.filter((product) => {
+    const okSize = sizes.length === 0 || product.variants?.some((v) => v.size && sizes.includes(v.size));
+    const okColor = colors.length === 0 || product.variants?.some((v) => v.color && colors.includes(v.color));
+    return okSize && okColor;
+  });
+
+  const allSizes = useMemo(() => {
+    const set = new Set<string>();
+    items.forEach((p) => p.variants?.forEach((v) => v.size && set.add(v.size)));
+    return [...set];
+  }, [items]);
+
+  const allColors = useMemo(() => {
+    const map = new Map<string, string | null>();
+    items.forEach((p) => p.variants?.forEach((v) => v.color && !map.has(v.color) && map.set(v.color, v.colorHex ?? null)));
+    return [...map.entries()];
+  }, [items]);
+
+  const update = (key: string, value: string | null) => {
+    const next = new URLSearchParams(params);
+    if (value === null || value === '') next.delete(key);
+    else next.set(key, value);
+    setParams(next);
+  };
+
+  const toggleIn = (list: string[], setter: (next: string[]) => void, value: string) =>
+    setter(list.includes(value) ? list.filter((item) => item !== value) : [...list, value]);
+
+  const quickAdd = async (product: Product) => {
+    const variant = product.variants?.find((v) => v.stock > 0);
+    if (!variant) {
+      toast.error('Sold out in every size');
+      return;
     }
-    if (search) params.search = search;
+    await addToCart(product.id, 1, variant.id);
+  };
 
-    productsApi.list(params).then((res) => {
-      setProducts(res.data.content);
-      setPageData(res.data);
-    }).finally(() => setLoading(false));
-  }, [categorySlug, search, sortBy, currentPage, categories]);
-
-  const pageTitle = categorySlug
-    ? categories.find((c) => c.slug === categorySlug)?.name || categorySlug
-    : search ? `Results for "${search}"` : 'All Products';
-
-  const sortOptions = [
-    { value: 'createdAt,desc', label: 'Newest' },
-    { value: 'price,asc', label: 'Price: Low to High' },
-    { value: 'price,desc', label: 'Price: High to Low' },
-    { value: 'name,asc', label: 'A — Z' },
+  const crumbs = [
+    { label: 'Home', to: '/' },
+    { label: 'Shop', to: '/products' },
+    ...(category ? [{ label: category.name, to: '/products' }] : []),
   ];
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-      {/* Header */}
-      <div className="flex items-end justify-between mb-8">
-        <div>
-          <p className="text-muted text-xs tracking-widest-xl uppercase mb-2">Collection</p>
-          <h1 className="font-display text-display-md">{pageTitle}</h1>
-          {pageData && (
-            <p className="text-muted text-sm mt-2">{pageData.totalElements} pieces</p>
-          )}
+    <div className="mx-auto max-w-[1400px] px-margin-mobile sm:px-margin-tablet lg:px-margin-desktop">
+      <nav aria-label="Breadcrumb" className="flex items-center gap-space-2xs py-space-md text-label-sm text-on-surface-variant">
+        {crumbs.map((crumb, index) => {
+          const current = index === crumbs.length - 1;
+          return (
+            <span key={crumb.label} className="flex items-center gap-space-2xs">
+              {index > 0 && <Icon name="chevron_right" className="text-sm text-outline-variant" />}
+              {current ? (
+                <span className="text-on-surface">{crumb.label}</span>
+              ) : (
+                <Link to={crumb.to} className="transition-colors hover:text-primary">
+                  {crumb.label}
+                </Link>
+              )}
+            </span>
+          );
+        })}
+      </nav>
+
+      <header className="pb-space-md">
+        <Eyebrow className="mb-space-2xs text-primary-container">Ready to wear</Eyebrow>
+        <div className="flex items-end justify-between gap-space-md">
+          <h1 className="font-display text-headline-xl-mobile sm:text-headline-xl">{category?.name ?? 'All pieces'}</h1>
+          <span className="pb-2 text-label-sm text-on-surface-variant">{page?.totalElements ?? 0} references</span>
         </div>
-        <div className="hidden sm:flex items-center gap-3">
-          <button onClick={() => setGridCols(gridCols === 3 ? 2 : 3)} className="p-2 hover:bg-light transition-colors">
-            {gridCols === 3 ? <LayoutGrid size={18} /> : <Grid3X3 size={18} />}
+        {category?.description && <p className="mt-space-xs max-w-xl text-body-md text-on-surface-variant">{category.description}</p>}
+      </header>
+
+      {/* Sticky control bar */}
+      <div className="sticky top-16 z-30 -mx-margin-mobile border-y border-outline-variant/40 bg-surface/85 px-margin-mobile py-space-sm backdrop-blur-md sm:top-20 sm:mx-0 sm:rounded-xl sm:border sm:px-space-md sm:shadow-card lg:mx-0">
+        <div className="no-scrollbar flex items-center gap-space-xs overflow-x-auto">
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(!drawerOpen)}
+            className="btn-tonal h-9 shrink-0 gap-space-2xs px-space-md text-label-sm sm:hidden"
+          >
+            <Icon name="tune" className="text-lg" />
+            Filters
+            {(sizes.length > 0 || colors.length > 0 || band) && (
+              <span className="ml-space-2xs rounded-full bg-primary px-1.5 text-[10px] font-semibold text-on-primary">
+                {sizes.length + colors.length + (band ? 1 : 0)}
+              </span>
+            )}
           </button>
-        </div>
-      </div>
 
-      {/* Filters & Sort */}
-      <div className="flex items-center justify-between mb-8 pb-4 border-b border-light">
-        <div className="flex items-center gap-2">
-          {categorySlug && (
-            <button onClick={() => { searchParams.delete('category'); setSearchParams(searchParams); }} className="flex items-center gap-1 bg-charcoal text-white text-xs px-3 py-1.5 tracking-wide">
-              {pageTitle} <X size={12} />
-            </button>
-          )}
-          {search && (
-            <button onClick={() => { searchParams.delete('search'); setSearchParams(searchParams); }} className="flex items-center gap-1 bg-charcoal text-white text-xs px-3 py-1.5 tracking-wide">
-              {search} <X size={12} />
-            </button>
-          )}
-        </div>
-        <div className="relative">
-          <select
-            value={sortBy}
-            onChange={(e) => { searchParams.set('sort', e.target.value); setSearchParams(searchParams); }}
-            className="appearance-none bg-transparent text-sm pr-6 cursor-pointer outline-none font-medium"
-          >
-            {sortOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-          <ChevronDown size={14} className="absolute right-0 top-1/2 -translate-y-1/2 pointer-events-none text-muted" />
-        </div>
-      </div>
-
-      {/* Category chips */}
-      <div className="flex flex-wrap gap-2 mb-8">
-        {categories.filter((c) => !c.parentId).map((cat) => (
           <Link
-            key={cat.id}
-            to={`/products?category=${cat.slug}`}
-            className={`text-xs px-4 py-2 border transition-colors ${
-              categorySlug === cat.slug
-                ? 'bg-charcoal text-white border-charcoal'
-                : 'border-light hover:border-charcoal'
-            }`}
+            to="/products"
+            className={clsx('shrink-0', !categorySlug && !search ? 'text-primary' : 'text-on-surface-variant')}
           >
-            {cat.name}
+            <Chip selected={!categorySlug && !search} tone="segment">All</Chip>
           </Link>
-        ))}
+          {categories
+            .filter((c) => !c.parentId)
+            .map((c) => (
+              <Link key={c.id} to={`/products?category=${c.slug}`}>
+                <Chip selected={c.slug === categorySlug} tone="segment" count={c.productCount}>
+                  {c.name}
+                </Chip>
+              </Link>
+            ))}
+
+          <div className="ml-auto hidden shrink-0 items-center gap-space-xs sm:flex">
+            <Icon name="swap_vert" className="text-lg text-outline" />
+            <select
+              value={sort}
+              onChange={(event) => update('sort', event.target.value)}
+              className="rounded-full border border-outline-variant bg-surface-container-lowest px-space-md py-space-xs text-label-sm outline-none focus:border-primary"
+            >
+              <option value="featured">Featured</option>
+              <option value="price-asc">Price: low to high</option>
+              <option value="price-desc">Price: high to low</option>
+              <option value="name">Alphabetical</option>
+            </select>
+          </div>
+        </div>
+
+        {drawerOpen && (
+          <div className="mt-space-md space-y-space-md border-t border-outline-variant/40 pt-space-md sm:hidden">
+            <div>
+              <p className="eyebrow mb-space-xs">Price</p>
+              <div className="flex flex-wrap gap-space-xs">
+                {PRICE_BANDS.map((priceBand, index) => (
+                  <Chip
+                    key={priceBand.label}
+                    selected={String(index) === bandIndex}
+                    onClick={() => update('band', String(index) === bandIndex ? null : String(index))}
+                  >
+                    {priceBand.label}
+                  </Chip>
+                ))}
+              </div>
+            </div>
+            {allSizes.length > 0 && (
+              <div>
+                <p className="eyebrow mb-space-xs">Size</p>
+                <div className="flex flex-wrap gap-space-xs">
+                  {allSizes.map((size) => (
+                    <Chip key={size} selected={sizes.includes(size)} onClick={() => toggleIn(sizes, setSizes, size)}>
+                      {size}
+                    </Chip>
+                  ))}
+                </div>
+              </div>
+            )}
+            {allColors.length > 0 && (
+              <div>
+                <p className="eyebrow mb-space-xs">Colour</p>
+                <div className="flex flex-wrap gap-space-xs">
+                  {allColors.map(([label, hex]) => (
+                    <Chip key={label} selected={colors.includes(label)} onClick={() => toggleIn(colors, setColors, label)}>
+                      <span className="h-2.5 w-2.5 rounded-full border border-outline-variant" style={{ backgroundColor: hex ?? '#e2e2e2' }} />
+                      {label}
+                    </Chip>
+                  ))}
+                </div>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setSizes([]);
+                setColors([]);
+              }}
+              className="text-label-sm font-medium text-primary"
+            >
+              Clear filters
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Product Grid */}
-      {loading ? (
-        <div className={`grid gap-4 lg:gap-6 ${gridCols === 3 ? 'grid-cols-2 lg:grid-cols-3' : 'grid-cols-2'}`}>
-          {[1,2,3,4,5,6].map((i) => (
-            <div key={i} className="animate-pulse">
-              <div className="aspect-[3/4] bg-light mb-3" />
-              <div className="h-4 bg-light w-2/3 mb-2" />
-              <div className="h-3 bg-light w-1/3" />
+      {/* Desktop sidebar + grid */}
+      <div className="flex gap-space-2xl py-space-xl">
+        <aside className="hidden w-56 shrink-0 lg:block">
+          <div className="sticky top-28 space-y-space-xl">
+            <div>
+              <h3 className="eyebrow mb-space-sm">Price</h3>
+              <div className="space-y-space-xs">
+                {PRICE_BANDS.map((bandItem, index) => (
+                  <label key={bandItem.label} className="flex cursor-pointer items-center gap-space-sm text-body-md text-on-surface-variant hover:text-on-surface">
+                    <input
+                      type="radio"
+                      checked={String(index) === bandIndex}
+                      onChange={() => update('band', String(index))}
+                      className="h-4 w-4 accent-primary"
+                    />
+                    {bandItem.label}
+                  </label>
+                ))}
+                {bandIndex !== null && (
+                  <button type="button" onClick={() => update('band', null)} className="text-label-sm text-primary">
+                    Reset price
+                  </button>
+                )}
+              </div>
             </div>
-          ))}
-        </div>
-      ) : products.length === 0 ? (
-        <div className="py-20 text-center">
-          <p className="text-muted text-sm">No products found.</p>
-        </div>
-      ) : (
-        <div className={`grid gap-4 lg:gap-6 ${gridCols === 3 ? 'grid-cols-2 lg:grid-cols-3' : 'grid-cols-2'}`}>
-          {products.map((product) => (
-            <Link key={product.id} to={`/product/${product.slug}`} className="group">
-              <div className="relative aspect-[3/4] overflow-hidden bg-light mb-3">
-                <img
-                  src={product.images[0]?.imageUrl}
-                  alt={product.name}
-                  className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-                />
-                {product.compareAtPrice && (
-                  <span className="absolute top-3 left-3 bg-charcoal text-white text-[10px] px-2 py-1 tracking-wide uppercase">Sale</span>
-                )}
+            {allSizes.length > 0 && (
+              <div>
+                <h3 className="eyebrow mb-space-sm">Size</h3>
+                <div className="flex flex-wrap gap-space-xs">
+                  {allSizes.map((size) => (
+                    <Chip key={size} selected={sizes.includes(size)} onClick={() => toggleIn(sizes, setSizes, size)}>
+                      {size}
+                    </Chip>
+                  ))}
+                </div>
               </div>
-              <h3 className="text-sm font-medium text-charcoal mb-1 group-hover:text-primary transition-colors">{product.name}</h3>
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium">${product.price.toFixed(2)}</span>
-                {product.compareAtPrice && (
-                  <span className="text-sm text-muted line-through">${product.compareAtPrice.toFixed(2)}</span>
-                )}
+            )}
+            {allColors.length > 0 && (
+              <div>
+                <h3 className="eyebrow mb-space-sm">Colour</h3>
+                <div className="flex flex-wrap gap-space-xs">
+                  {allColors.map(([label, hex]) => (
+                    <Chip key={label} selected={colors.includes(label)} onClick={() => toggleIn(colors, setColors, label)}>
+                      <span className="h-2.5 w-2.5 rounded-full border border-outline-variant" style={{ backgroundColor: hex ?? '#e2e2e2' }} />
+                      {label}
+                    </Chip>
+                  ))}
+                </div>
               </div>
-            </Link>
-          ))}
-        </div>
-      )}
+            )}
+          </div>
+        </aside>
 
-      {/* Pagination */}
-      {pageData && pageData.totalPages > 1 && (
-        <div className="flex justify-center gap-2 mt-12">
-          {Array.from({ length: pageData.totalPages }, (_, i) => (
-            <button
-              key={i}
-              onClick={() => { searchParams.set('page', String(i)); setSearchParams(searchParams); }}
-              className={`w-9 h-9 text-sm font-medium transition-colors ${
-                i === currentPage ? 'bg-charcoal text-white' : 'hover:bg-light'
-              }`}
-            >
-              {i + 1}
-            </button>
-          ))}
+        <div className="min-w-0 flex-1">
+          {loading && items.length === 0 ? (
+            <div className="grid grid-cols-2 gap-space-sm lg:grid-cols-3">
+              {[1, 2, 3, 4, 5, 6].map((key) => (
+                <ProductCardSkeleton key={key} />
+              ))}
+            </div>
+          ) : visible.length === 0 ? (
+            <div className="flex flex-col items-center gap-space-md rounded-2xl bg-surface-container-low px-space-lg py-space-3xl text-center">
+              <Icon name="search_off" className="text-3xl text-outline" />
+              <h3 className="font-display text-headline-md">Nothing matches yet</h3>
+              <p className="max-w-sm text-body-md text-on-surface-variant">
+                Try a wider price band, or clear the size and colour filters.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setSizes([]);
+                  setColors([]);
+                  update('band', null);
+                }}
+                className="btn-primary"
+              >
+                Reset filters
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="mb-space-md flex items-center gap-space-md">
+                <ProgressBar value={page ? (items.length / Math.max(page.totalElements, 1)) * 100 : 0} className="max-w-40" />
+                <span className="text-label-sm text-on-surface-variant">
+                  {visible.length} of {page?.totalElements ?? 0} shown
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-space-sm lg:grid-cols-3">
+                {visible.map((product) => (
+                  <ProductCard
+                    key={product.id}
+                    product={product}
+                    currency={config.currency}
+                    lowStockThreshold={config.lowStockThreshold}
+                    showStock
+                    onQuickAdd={quickAdd}
+                  />
+                ))}
+              </div>
+              {page && !page.last && (
+                <div className="mt-space-xl flex justify-center">
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => load(page.page + 1, false)}
+                    className="btn-tonal min-w-48"
+                  >
+                    {loading ? 'Loading…' : `Load ${Math.min(page.size, page.totalElements - items.length)} more`}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }

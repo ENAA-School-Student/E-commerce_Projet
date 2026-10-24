@@ -6,6 +6,7 @@ import toast from 'react-hot-toast';
 
 interface CartContextType {
   cart: Cart | null;
+  loading: boolean;
   itemCount: number;
   refreshCart: () => Promise<void>;
   addToCart: (productId: number, quantity: number, variantId?: number) => Promise<void>;
@@ -17,16 +18,27 @@ interface CartContextType {
 const CartContext = createContext<CartContextType | null>(null);
 
 export function CartProvider({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [cart, setCart] = useState<Cart | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const refreshCart = useCallback(async () => {
-    if (!user) { setCart(null); return; }
+    if (authLoading) return;
+    setLoading(true);
+    if (!user) {
+      setCart(null);
+      setLoading(false);
+      return;
+    }
     try {
       const res = await cartApi.get();
       setCart(res.data);
-    } catch { setCart(null); }
-  }, [user]);
+    } catch {
+      setCart(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [authLoading, user]);
 
   useEffect(() => { refreshCart(); }, [refreshCart]);
 
@@ -56,7 +68,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const itemCount = cart?.itemCount ?? 0;
 
   return (
-    <CartContext.Provider value={{ cart, itemCount, refreshCart, addToCart, updateQuantity, removeFromCart, clearCart }}>
+    <CartContext.Provider value={{ cart, loading, itemCount, refreshCart, addToCart, updateQuantity, removeFromCart, clearCart }}>
       {children}
     </CartContext.Provider>
   );

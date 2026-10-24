@@ -15,6 +15,7 @@ public record ProductRequest(
     Long categoryId,
     String brand,
     String collection,
+    String badge,
     Boolean featured,
     Boolean active,
     List<VariantRequest> variants,

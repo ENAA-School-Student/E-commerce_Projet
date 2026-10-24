@@ -80,6 +80,7 @@ public class ProductService {
             .compareAtPrice(request.compareAtPrice())
             .brand(request.brand())
             .collection(request.collection())
+            .badge(request.badge())
             .active(request.active() == null || request.active())
             .featured(request.featured() != null && request.featured())
             .build();
@@ -125,12 +126,13 @@ public class ProductService {
         Product product = getProductById(id);
 
         product.setName(request.name());
-        product.setSlug(toSlug(request.name()));
+        product.setSlug(toSlug(request.name(), id));
         product.setDescription(request.description());
         product.setPrice(request.price());
         product.setCompareAtPrice(request.compareAtPrice());
         product.setBrand(request.brand());
         product.setCollection(request.collection());
+        product.setBadge(request.badge());
         if (request.active() != null) product.setActive(request.active());
         if (request.featured() != null) product.setFeatured(request.featured());
 
@@ -196,6 +198,7 @@ public class ProductService {
             product.getCategory() != null ? product.getCategory().getName() : null,
             product.getBrand(),
             product.getCollection(),
+            product.getBadge(),
             product.getFeatured(),
             product.getActive(),
             product.getVariants().stream()
@@ -236,12 +239,16 @@ public class ProductService {
     }
 
     private String toSlug(String name) {
+        return toSlug(name, null);
+    }
+
+    private String toSlug(String name, Long excludeId) {
         String base = name.toLowerCase().trim()
             .replaceAll("[^a-z0-9\\s-]", "")
             .replaceAll("\\s+", "-");
         String slug = base;
         int counter = 1;
-        while (productRepository.findBySlug(slug).isPresent()) {
+        while (productRepository.findBySlug(slug).filter(p -> !p.getId().equals(excludeId)).isPresent()) {
             slug = base + "-" + counter++;
         }
         return slug;
