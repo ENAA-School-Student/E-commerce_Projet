@@ -1,10 +1,12 @@
 package com.luxemart.api.security;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
@@ -21,6 +23,8 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.io.IOException;
+import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.List;
 
@@ -32,6 +36,7 @@ public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
     private final CustomUserDetailsService userDetailsService;
+    private final ObjectMapper objectMapper;
 
     @Value("${app.cors.allowed-origins}")
     private String allowedOrigins;
@@ -47,6 +52,13 @@ public class SecurityConfig {
         "/api/auth/login"
     };
 
+    private static final String[] DOCUMENTATION_ENDPOINTS = {
+        "/swagger-ui/**",
+        "/swagger-ui.html",
+        "/v3/api-docs",
+        "/v3/api-docs/**"
+    };
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
@@ -58,24 +70,18 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.GET, PUBLIC_GET_ENDPOINTS).permitAll()
                 .requestMatchers(HttpMethod.POST, PUBLIC_POST_ENDPOINTS).permitAll()
-                .requestMatchers("/actuator/**", "/error").permitAll()
+                .requestMatchers(DOCUMENTATION_ENDPOINTS).permitAll()
+                .requestMatchers("/actuator/health", "/actuator/health/**", "/error").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .anyRequest().authenticated()
             )
-            .exceptionHandling(ex -> ex.authenticationEntryPoint(
-                (request, response, authException) -> {
-                    response.setStatus(401);
-                    response.setContentType("application/json");
-                    response.getWriter().write("{\"error\":\"Unauthorized\",\"message\":\"Authentication required\"}");
-                }
-            ))
-            .exceptionHandling(ex -> ex.accessDeniedHandler(
-                (request, response, accessDeniedException) -> {
-                    response.setStatus(403);
-                    response.setContentType("application/json");
-                    response.getWriter().write("{\"error\":\"Forbidden\",\"message\":\"Insufficient privileges\"}");
-                }
-            ));
+            .exceptionHandling(ex -> ex
+                .authenticationEntryPoint((request, response, authException) ->
+                    ProblemResponses.write(objectMapper, response, HttpStatus.UNAUTHORIZED,
+                        "Unauthorized", "Authentication required"))
+                .accessDeniedHandler((request, response, accessDeniedException) ->
+                    ProblemResponses.write(objectMapper, response, HttpStatus.FORBIDDEN,
+                        "Forbidden", "Insufficient privileges")));
 
         return http.build();
     }

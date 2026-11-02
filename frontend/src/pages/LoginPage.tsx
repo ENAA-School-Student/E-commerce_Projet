@@ -3,7 +3,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import Icon from '@/components/Icon';
-import { products as productsApi } from '@/lib/api';
+import { products as productsApi, httpStatus } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 
 type Mode = 'signin' | 'register';
@@ -49,8 +49,10 @@ export default function LoginPage() {
     try {
       await login(signin.email, signin.password);
       toast.success('Welcome back');
-    } catch {
-      toast.error('These credentials do not match an account');
+    } catch (error) {
+      toast.error(httpStatus(error) === 429
+        ? 'Too many attempts from this address — wait a few seconds and try again'
+        : 'These credentials do not match an account');
     } finally {
       setBusy(false);
     }

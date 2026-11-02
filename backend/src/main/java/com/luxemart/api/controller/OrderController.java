@@ -4,6 +4,7 @@ import com.luxemart.api.dto.CheckoutRequest;
 import com.luxemart.api.dto.OrderResponse;
 import com.luxemart.api.dto.PageResponse;
 import com.luxemart.api.security.SecurityUtils;
+import com.luxemart.api.service.CheckoutService;
 import com.luxemart.api.service.OrderService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.*;
 public class OrderController {
 
     private final OrderService orderService;
+    private final CheckoutService checkoutService;
 
     @GetMapping
     public ResponseEntity<PageResponse<OrderResponse>> getMyOrders(
@@ -29,7 +31,7 @@ public class OrderController {
     @PostMapping("/checkout")
     public ResponseEntity<OrderResponse> checkout(@Valid @RequestBody CheckoutRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED)
-            .body(orderService.createOrder(SecurityUtils.getCurrentUserId(), request));
+            .body(checkoutService.submit(SecurityUtils.getCurrentUserId(), request));
     }
 
     @GetMapping("/{orderId}")

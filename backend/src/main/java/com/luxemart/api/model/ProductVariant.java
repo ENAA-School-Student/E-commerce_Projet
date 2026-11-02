@@ -29,4 +29,7 @@ public class ProductVariant {
 
     @Builder.Default
     private Boolean active = true;
+
+    @Version
+    private long version;
 }

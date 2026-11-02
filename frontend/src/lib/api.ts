@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import { Address, AuthResponse, StoreConfig } from '@/types';
 
 const api = axios.create({
@@ -114,5 +114,9 @@ export const admin = {
     api.put(`/admin/products/${id}`, data),
   deleteProduct: (id: number) => api.delete(`/admin/products/${id}`),
 };
+
+export function httpStatus(error: unknown): number | undefined {
+  return error instanceof AxiosError ? error.response?.status : undefined;
+}
 
 export default api;
