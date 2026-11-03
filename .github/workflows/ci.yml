@@ -40,6 +40,42 @@ jobs:
       - run: npm ci
       - run: npm run build
 
+  mysql-schema:
+    name: Flyway + Hibernate validate (MySQL 8.4)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci-only-password
+          MYSQL_DATABASE: luxemart_db
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pci-only-password"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      MYSQL_IT: 'true'
+      TEST_DB_URL: jdbc:mysql://localhost:3306/luxemart_db?useSSL=false&serverTimezone=UTC
+      TEST_DB_USERNAME: root
+      TEST_DB_PASSWORD: ci-only-password
+      JWT_SECRET: ci-only-secret-value-with-at-least-32-chars
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+      - name: Apply migrations and validate the entity mapping
+        run: mvn -B test -Dtest=MySqlSchemaMigrationIT
+
   compose:
     name: Compose configuration
     runs-on: ubuntu-latest

@@ -9,7 +9,7 @@ Application e-commerce complète : front React/Vite + back Spring Boot REST, ave
 | Frontend | React 18, TypeScript 5, Vite 6, Tailwind CSS 3, React Router 6, Axios, lucide-react, react-hot-toast |
 | Backend | Java 17, Spring Boot 3.3.3, Spring Web, Spring Data JPA / Hibernate, Spring Security, JWT (jjwt 0.12.6), Bean Validation, Lombok |
 | Observabilité / API | springdoc-openapi 2.6 (Swagger UI), Actuator (sonde de santé), Bucket4j (anti-brute-force) |
-| Base de données | MySQL 8 (profil par défaut) ou H2 en mémoire (profil `dev`) |
+| Base de données | MySQL 8 (profil par défaut) ou H2 en mémoire (profil `dev`), schéma versionné par Flyway 10 |
 | Conteneurs | Docker multi-stage, docker-compose (mysql + api + web derrière nginx) |
 | Build / CI | Maven, npm, GitHub Actions (`.github/workflows/ci.yml`) |
 
@@ -33,8 +33,8 @@ E-commerce_Projet/
 │       │   ├── repository/       # Spring Data JPA
 │       │   ├── security/         # JWT, SecurityConfig, LoginRateLimiter, ProblemResponses
 │       │   └── service/          # Logique métier (dont CheckoutService : retry sur contention)
-│       ├── main/resources/       # application.properties, application-dev.properties
-│       └── test/java/com/luxemart/api/   # tests d'accès, checkout, rate limiting, secret JWT
+│       ├── main/resources/       # application.properties, application-dev.properties, db/migration/
+│       └── test/java/com/luxemart/api/   # tests d'accès, checkout, rate limiting, secret JWT, migration MySQL
 └── frontend/                     # SPA React
     ├── Dockerfile, nginx.conf
     └── src/
@@ -122,7 +122,7 @@ docker compose up --build
    mvn spring-boot:run
    ```
 
-Sans `JWT_SECRET`, l'application refuse de démarrer (`IllegalStateException: jwt.secret is not set`, vérifié par `JwtSecretGuardTest`). Le schéma est géré par Hibernate (`ddl-auto=update`) : les tables sont créées au premier lancement, puis le seed de `DataInitializer` s'exécute.
+Sans `JWT_SECRET`, l'application refuse de démarrer (`IllegalStateException: jwt.secret is not set`, vérifié par `JwtSecretGuardTest`). En profil par défaut, Flyway applique les migrations de `backend/src/main/resources/db/migration`, puis Hibernate se borne à vérifier que les entités collent au schéma (`ddl-auto=validate`) : plus aucune table créée ni modifiée par l'ORM. Le seed de `DataInitializer` s'exécute ensuite. Le profil `dev` (H2) conserve `create-drop` et désactive Flyway, les scripts MySQL n'étant pas portables sur H2.
 
 Console H2 (mode `dev` uniquement) : http://localhost:8080/h2-console — JDBC URL `jdbc:h2:mem:luxemart`, utilisateur `sa`, mot de passe vide.
 
@@ -201,6 +201,9 @@ Préfixe `/api`. « Public » = `GET` autorisé sans jeton ; « Bearer » = en-t
 | `server.forward-headers-strategy` | `framework` | Lit `X-Forwarded-*` : l'IP client vue par le rate limiter est la bonne derrière nginx |
 | `spring.datasource.url` | `jdbc:mysql://localhost:3306/luxemart_db?...` | Passage en H2 via le profil `dev` |
 | `DB_PASSWORD` (env) | `root` | Mot de passe base de données |
+| `spring.jpa.hibernate.ddl-auto` | `validate` (`dev` : `create-drop`) | Hibernate contrôle le schéma, il ne le génère plus |
+| `spring.flyway.enabled` | `true` (`dev` : `false`) | Migrations appliquées au démarrage depuis `db/migration` |
+| `spring.flyway.baseline-on-migrate` / `baseline-version` | `true` / `1` | Une base déjà bâtie par l'ancien `ddl-auto=update` est baselinée en V1 au lieu d'être rejouée |
 | `JWT_SECRET` (env) | **aucun repli** | Obligatoire : `JwtService` refuse de démarrer sous 32 octets. Le repli n'existe que dans `application-dev.properties` |
 | `jwt.expiration-ms` | `86400000` (24 h) | Expiration du jeton d'accès |
 | `jwt.refresh-expiration-ms` | `604800000` (7 j) | Expiration du jeton de rafraîchissement |
@@ -232,8 +235,9 @@ Le frontend lit les règles de commerce via `GET /api/config` (hook `useStoreCon
 | `LoginRateLimitTest` | 429 + `Retry-After` + `problem+json` au-delà du quota, `/auth/register` non compté |
 | `JwtSecretGuardTest` | Démarrage refusé sans `JWT_SECRET` ou sous 256 bits, et absence de repli dans le profil par défaut |
 | `DataSeedSmokeTest` | Le seed utilisateurs/catégories/produits s'exécute |
+| `MySqlSchemaMigrationIT` | Flyway applique `V1__baseline_schema.sql` sur un vrai MySQL 8, puis Hibernate valide chaque entité contre le schéma obtenu. Sauté hors `MYSQL_IT=true` (exécuté par le job `mysql-schema` de la CI) |
 
-**CI** — `.github/workflows/ci.yml`, sur chaque push et PR vers `main` : `mvn -B verify` (JDK 17, cache Maven), `npm ci && npm run build` (Node 20, `tsc -b` inclut le type-check), et `docker compose config -q`.
+**CI** — `.github/workflows/ci.yml`, sur chaque push et PR vers `main` : `mvn -B verify` (JDK 17, cache Maven), `npm ci && npm run build` (Node 20, `tsc -b` inclut le type-check), `mvn -B test -Dtest=MySqlSchemaMigrationIT` contre un service `mysql:8.4` (job `mysql-schema`), et `docker compose config -q`.
 
 **Build manuel** :
 
@@ -252,6 +256,8 @@ cd backend && mvn clean package    # jar dans backend/target/ (les tests s'exéc
 | `Communications link failure` | Service MySQL non démarré ; passer en `dev` pour H2 |
 | 429 sur la connexion | Quota anti-brute-force atteint pour cette IP ; attendre `Retry-After` secondes ou relever `app.security.login-rate-limit.requests-per-window` |
 | 409 sur le checkout | Le stock a changé entre deux tentatives concurrentes : relancer la commande |
+| `Validate error ... missing column` au démarrage | Le schéma ne correspond plus aux entités : ajouter une migration `V<n>__....sql` dans `db/migration`, Hibernate ne corrige plus rien |
+| `Migration checksum mismatch for baseline version 1` | `V1__baseline_schema.sql` a été modifié après application. Sur une base de développement, repartir d'une base vide ; sinon `mvn flyway:repair` |
 | Erreurs CORS depuis le front | Vérifier le port réel du backend, la cible du proxy Vite et `app.cors.allowed-origins` |
 | `npm install` très lent / build Maven long | Normal sur ce poste ; les dépendances sont ensuite en cache |
 | Le seed ne recrée pas les données | C'est volontaire : il n'insère que ce qui manque. Vider la base — ou rester sur le profil `dev`, recréé à chaque démarrage — pour le rejouer |
@@ -264,17 +270,15 @@ cd backend && mvn clean package    # jar dans backend/target/ (les tests s'exéc
 - **Cohérence du stock** : verrouillage optimiste + retry borné.
 - **Jetons** : toujours stockés en `localStorage` côté React, donc exposés au XSS. La migration vers un cookie `HttpOnly` pour le refresh token (et l'accès en mémoire) est le prochain chantier de sécurité ; CSRF reste désactivé car seules les en-têtes `Authorization` portent l'identité.
 - **Paiement simulé** : aucune passerelle (Stripe/PayPal), `paymentStatus` reste `PENDING` tant qu'un webhook n'existe pas.
-- **Schéma géré par Hibernate** (`ddl-auto=update`) : pas encore de migrations versionnées (Flyway) — à faire avec une base MySQL réelle à disposition.
 - **Images produits** : URLs externes (Unsplash), pas d'endpoint d'upload malgré la limite multipart de 10 MB configurée.
 - **Pas de journal d'audit, ni de rôles intermédiaires** : un seul rôle `ROLE_ADMIN`.
 
 ## Roadmap court terme
 
-1. Flyway + `ddl-auto=validate` (nécessite MySQL/Docker joignable pour valider le DDL)
-2. Cookies `HttpOnly` pour le refresh token + rotation, access token en mémoire
-3. Stripe Payment Intents + webhooks idempotents, emails transactionnels, mot de passe oublié
-4. Panier invité + coupons, recherche facettes, Redis pour le catalogue et les compteurs de rate limiting
-5. Journal d'audit, rôles fins, machine à états stricte sur les commandes
+1. Cookies `HttpOnly` pour le refresh token + rotation, access token en mémoire
+2. Stripe Payment Intents + webhooks idempotents, emails transactionnels, mot de passe oublié
+3. Panier invité + coupons, recherche facettes, Redis pour le catalogue et les compteurs de rate limiting
+4. Journal d'audit, rôles fins, machine à états stricte sur les commandes
 
 ## Remote
 
