@@ -1,14 +1,13 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { User } from '@/types';
-import { auth as authApi, users as usersApi } from '@/lib/api';
+import { auth as authApi, users as usersApi, onSessionExpired, setAccessToken } from '@/lib/api';
 
 interface AuthContextType {
   user: User | null;
-  token: string | null;
   login: (email: string, password: string) => Promise<void>;
   register: (data: { firstName: string; lastName: string; email: string; password: string; phone?: string }) => Promise<void>;
   refreshUser: () => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   isAdmin: boolean;
   loading: boolean;
 }
@@ -17,54 +16,64 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // The HttpOnly refresh cookie is the only stored credential, so a reload restores the session by
+  // trading it for a new access token. Nothing script-readable is persisted, so there is no XSS token to steal.
   useEffect(() => {
-    const saved = localStorage.getItem('token');
-    const savedUser = localStorage.getItem('user');
-    if (saved && savedUser) {
-      setToken(saved);
-      setUser(JSON.parse(savedUser));
-    }
-    setLoading(false);
+    let cancelled = false;
+    (async () => {
+      await authApi.bootstrap().catch(() => null);
+      try {
+        const res = await authApi.refresh();
+        if (cancelled) return;
+        setAccessToken(res.data.token);
+        setUser(res.data.user);
+      } catch {
+        if (!cancelled) setAccessToken(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    onSessionExpired(() => {
+      setAccessToken(null);
+      setUser(null);
+    });
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
     const res = await authApi.login(email, password);
-    const { token: t, user: u } = res.data;
-    localStorage.setItem('token', t);
-    localStorage.setItem('user', JSON.stringify(u));
-    setToken(t);
-    setUser(u);
+    setAccessToken(res.data.token);
+    setUser(res.data.user);
   }, []);
 
   const register = useCallback(async (data: { firstName: string; lastName: string; email: string; password: string; phone?: string }) => {
     const res = await authApi.register(data);
-    const { token: t, user: u } = res.data;
-    localStorage.setItem('token', t);
-    localStorage.setItem('user', JSON.stringify(u));
-    setToken(t);
-    setUser(u);
+    setAccessToken(res.data.token);
+    setUser(res.data.user);
   }, []);
 
   const refreshUser = useCallback(async () => {
     const res = await usersApi.me();
-    localStorage.setItem('user', JSON.stringify(res.data));
     setUser(res.data);
   }, []);
 
-  const logout = useCallback(() => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    setToken(null);
+  const logout = useCallback(async () => {
+    // Exempt from CSRF server-side: it only clears the caller's own cookie, so it can never fail for
+    // token reasons — and a failed call would leave the refresh cookie live.
+    await authApi.logout().catch(() => null);
+    setAccessToken(null);
     setUser(null);
   }, []);
 
   const isAdmin = user?.roles?.includes('ROLE_ADMIN') ?? false;
 
   return (
-    <AuthContext.Provider value={{ user, token, login, register, refreshUser, logout, isAdmin, loading }}>
+    <AuthContext.Provider value={{ user, login, register, refreshUser, logout, isAdmin, loading }}>
       {children}
     </AuthContext.Provider>
   );

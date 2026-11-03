@@ -1,6 +1,7 @@
 package com.luxemart.api.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -19,6 +20,9 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
+import org.springframework.security.web.csrf.CsrfTokenRepository;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -27,6 +31,7 @@ import java.io.IOException;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 
 @Configuration
 @EnableWebSecurity
@@ -59,10 +64,22 @@ public class SecurityConfig {
         "/v3/api-docs/**"
     };
 
+    /**
+     * The endpoint that authenticates with an ambient cookie instead of the Authorization header, so the
+     * only one a cross-site form could ride on. Logout is deliberately exempt: it clears nothing but the
+     * caller's own cookie, and a CSRF rejection there would silently keep the session alive.
+     */
+    private static final Set<String> COOKIE_AUTHENTICATED_ENDPOINTS = Set.of("/api/auth/refresh");
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-            .csrf(csrf -> csrf.disable())
+            .csrf(csrf -> csrf
+                .csrfTokenRepository(csrfTokenRepository())
+                // The client echoes the raw cookie value in X-XSRF-TOKEN (the Axios/Angular convention),
+                // so no BREACH masking between what we hand out and what CsrfFilter compares.
+                .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
+                .requireCsrfProtectionMatcher(SecurityConfig::requiresCsrf))
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authenticationProvider(authenticationProvider())
@@ -70,6 +87,7 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.GET, PUBLIC_GET_ENDPOINTS).permitAll()
                 .requestMatchers(HttpMethod.POST, PUBLIC_POST_ENDPOINTS).permitAll()
+                .requestMatchers("/api/auth/refresh", "/api/auth/logout", "/api/auth/csrf").permitAll()
                 .requestMatchers(DOCUMENTATION_ENDPOINTS).permitAll()
                 .requestMatchers("/actuator/health", "/actuator/health/**", "/error").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
@@ -94,6 +112,20 @@ public class SecurityConfig {
         return provider;
     }
 
+    /**
+     * The token lives in a JS-readable cookie and is echoed back in X-XSRF-TOKEN: a cross-site page
+     * can neither read that cookie nor add the header, which is the double-submit check CsrfFilter runs.
+     */
+    @Bean
+    public CsrfTokenRepository csrfTokenRepository() {
+        return CookieCsrfTokenRepository.withHttpOnlyFalse();
+    }
+
+    static boolean requiresCsrf(HttpServletRequest request) {
+        String path = request.getRequestURI().substring(request.getContextPath().length());
+        return COOKIE_AUTHENTICATED_ENDPOINTS.contains(path);
+    }
+
     @Bean
     public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
         return config.getAuthenticationManager();
@@ -109,8 +141,8 @@ public class SecurityConfig {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(Arrays.asList(allowedOrigins.split(",")));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept", "Origin"));
-        configuration.setExposedHeaders(List.of("Authorization"));
+        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept", "Origin", "X-XSRF-TOKEN"));
+        configuration.setExposedHeaders(List.of("Set-Cookie", "Authorization"));
         configuration.setAllowCredentials(true);
         configuration.setMaxAge(3600L);
 

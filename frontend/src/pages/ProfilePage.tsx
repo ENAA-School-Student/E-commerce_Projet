@@ -131,8 +131,8 @@ export default function ProfilePage() {
             )}
             <button
               type="button"
-              onClick={() => {
-                logout();
+              onClick={async () => {
+                await logout();
                 navigate('/');
               }}
               className="flex items-center justify-center gap-space-2xs py-space-xs text-label-caps uppercase tracking-wider text-on-surface-variant transition-colors hover:text-error"

@@ -1,6 +1,7 @@
 package com.luxemart.api.security;
 
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtBuilder;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import jakarta.annotation.PostConstruct;
@@ -9,9 +10,11 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 
 import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Function;
 
 @Service
@@ -19,11 +22,18 @@ public class JwtService {
 
     private static final int MIN_SECRET_BYTES = 32; // HS256 requires a >= 256-bit key
 
+    public static final String TOKEN_TYPE_CLAIM = "typ";
+    public static final String ACCESS_TOKEN = "access";
+    public static final String REFRESH_TOKEN = "refresh";
+
     @Value("${jwt.secret}")
     private String secret;
 
     @Value("${jwt.expiration-ms}")
     private long expirationMs;
+
+    @Value("${jwt.refresh-expiration-ms}")
+    private long refreshExpirationMs;
 
     @PostConstruct
     void validateSecret() {
@@ -32,7 +42,7 @@ public class JwtService {
                 "jwt.secret is not set. Provide a JWT_SECRET environment variable (min "
                 + MIN_SECRET_BYTES + " bytes).");
         }
-        if (secret.getBytes(java.nio.charset.StandardCharsets.UTF_8).length < MIN_SECRET_BYTES) {
+        if (secret.getBytes(StandardCharsets.UTF_8).length < MIN_SECRET_BYTES) {
             throw new IllegalStateException(
                 "jwt.secret is too short: HS256 requires at least " + MIN_SECRET_BYTES + " bytes.");
         }
@@ -42,38 +52,58 @@ public class JwtService {
         return extractClaim(token, Claims::getSubject);
     }
 
-    public Long extractUserId(String token) {
-        Claims claims = extractAllClaims(token);
-        return claims.get("uid", Long.class);
+    public String extractTokenType(String token) {
+        return extractClaim(token, claims -> claims.get(TOKEN_TYPE_CLAIM, String.class));
     }
 
     public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
-        final Claims claims = extractAllClaims(token);
-        return claimsResolver.apply(claims);
+        return claimsResolver.apply(extractAllClaims(token));
     }
 
-    public String generateToken(UserDetails userDetails, Long userId) {
-        Map<String, Object> extraClaims = new HashMap<>();
-        extraClaims.put("uid", userId);
-        extraClaims.put("roles", userDetails.getAuthorities().stream()
-            .map(a -> a.getAuthority())
-            .toList());
-        return buildToken(extraClaims, userDetails, expirationMs);
+    public String generateAccessToken(UserDetails userDetails, Long userId) {
+        return buildToken(userDetails, userId, ACCESS_TOKEN, expirationMs, null);
     }
 
-    private String buildToken(Map<String, Object> extraClaims, UserDetails userDetails, long expiration) {
-        return Jwts.builder()
-            .claims(extraClaims)
-            .subject(userDetails.getUsername())
-            .issuedAt(new Date(System.currentTimeMillis()))
-            .expiration(new Date(System.currentTimeMillis() + expiration))
-            .signWith(getSignInKey())
-            .compact();
+    /**
+     * Carries a random id so two tokens issued in the same millisecond still differ, which keeps
+     * rotation observable by the client and reuse detectable if a denylist is added later.
+     */
+    public String generateRefreshToken(UserDetails userDetails, Long userId) {
+        return buildToken(userDetails, userId, REFRESH_TOKEN, refreshExpirationMs, UUID.randomUUID().toString());
+    }
+
+    public boolean isAccessToken(String token) {
+        return ACCESS_TOKEN.equals(extractTokenType(token));
     }
 
     public boolean isTokenValid(String token, UserDetails userDetails) {
-        final String username = extractUsername(token);
-        return (username.equals(userDetails.getUsername())) && !isTokenExpired(token);
+        return isAccessToken(token) && subjectMatches(token, userDetails);
+    }
+
+    public boolean isRefreshTokenValid(String token, UserDetails userDetails) {
+        return REFRESH_TOKEN.equals(extractTokenType(token)) && subjectMatches(token, userDetails);
+    }
+
+    private boolean subjectMatches(String token, UserDetails userDetails) {
+        return extractUsername(token).equals(userDetails.getUsername()) && !isTokenExpired(token);
+    }
+
+    private String buildToken(UserDetails userDetails, Long userId, String tokenType, long timeToLiveMs, String tokenId) {
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("uid", userId);
+        claims.put(TOKEN_TYPE_CLAIM, tokenType);
+        claims.put("roles", userDetails.getAuthorities().stream().map(a -> a.getAuthority()).toList());
+
+        JwtBuilder builder = Jwts.builder()
+            .claims(claims)
+            .subject(userDetails.getUsername())
+            .issuedAt(new Date())
+            .expiration(new Date(System.currentTimeMillis() + timeToLiveMs))
+            .signWith(getSignInKey());
+        if (tokenId != null) {
+            builder.id(tokenId);
+        }
+        return builder.compact();
     }
 
     private boolean isTokenExpired(String token) {
@@ -93,7 +123,6 @@ public class JwtService {
     }
 
     private SecretKey getSignInKey() {
-        byte[] keyBytes = secret.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        return Keys.hmacShaKeyFor(keyBytes);
+        return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 }

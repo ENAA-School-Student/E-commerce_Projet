@@ -169,6 +169,9 @@ Préfixe `/api`. « Public » = `GET` autorisé sans jeton ; « Bearer » = en-t
 | Méthode | Endpoint | Accès |
 | --- | --- | --- |
 | POST | `/auth/register`, `/auth/login` | Public (login limité à 10 essais/min par IP) |
+| GET | `/auth/csrf` | Public — pose le cookie `XSRF-TOKEN` que le front renvoie en `X-XSRF-TOKEN` |
+| POST | `/auth/refresh` | Cookie `LUXEMART_REFRESH` + en-tête `X-XSRF-TOKEN` obligatoires |
+| POST | `/auth/logout` | Cookie `LUXEMART_REFRESH` — sans CSRF : il ne peut que purger le cookie de son propre appelant |
 | GET | `/products` (`page,size,sort,categoryId,minPrice,maxPrice,search`), `/products/featured`, `/products/{slug}` | Public |
 | GET | `/categories`, `/categories/{slug}`, `/config` | Public |
 | GET/POST/PUT/DELETE | `/products/{productId}/reviews[/{reviewId}]` | Bearer |
@@ -185,8 +188,8 @@ Préfixe `/api`. « Public » = `GET` autorisé sans jeton ; « Bearer » = en-t
 | Status | Déclencheur |
 | --- | --- |
 | 400 | `BadRequestException`, payload invalide (`errors` par champ) |
-| 401 | Absence/jeton invalide de `Authorization`, identifiants erronés |
-| 403 | Rôle insuffisant (ex. client sur `/api/admin/**`) |
+| 401 | Absence/jeton invalide de `Authorization`, identifiants erronés, cookie `LUXEMART_REFRESH` absent ou invalide |
+| 403 | Rôle insuffisant (ex. client sur `/api/admin/**`), `X-XSRF-TOKEN` manquant sur `/auth/refresh` |
 | 404 | `ResourceNotFoundException`, ordre d'un autre client |
 | 409 | Conflit d'optimistic locking sur le stock après 3 tentatives |
 | 429 | Plus de 10 tentatives de connexion depuis la même IP en 60 s (`Retry-After`) |
@@ -206,7 +209,8 @@ Préfixe `/api`. « Public » = `GET` autorisé sans jeton ; « Bearer » = en-t
 | `spring.flyway.baseline-on-migrate` / `baseline-version` | `true` / `1` | Une base déjà bâtie par l'ancien `ddl-auto=update` est baselinée en V1 au lieu d'être rejouée |
 | `JWT_SECRET` (env) | **aucun repli** | Obligatoire : `JwtService` refuse de démarrer sous 32 octets. Le repli n'existe que dans `application-dev.properties` |
 | `jwt.expiration-ms` | `86400000` (24 h) | Expiration du jeton d'accès |
-| `jwt.refresh-expiration-ms` | `604800000` (7 j) | Expiration du jeton de rafraîchissement |
+| `jwt.refresh-expiration-ms` | `604800000` (7 j) | Expiration du jeton de rafraîchissement, égal à la durée du cookie |
+| `app.security.refresh-cookie.secure` | `true` (`dev` : `false`) | Attribut `Secure` du cookie `LUXEMART_REFRESH` ; à désactiver seulement en HTTP simple sur une IP |
 | `app.cors.allowed-origins` | `localhost:5173,5174,3000` | Origines autorisées |
 | `app.security.login-rate-limit.requests-per-window` | `10` | Tentatives de connexion autorisées par IP |
 | `app.security.login-rate-limit.window-seconds` | `60` | Fenêtre du rate limiting |
@@ -233,6 +237,7 @@ Le frontend lit les règles de commerce via `GET /api/config` (hook `useStoreCon
 | `ApiAccessControlTest` | Catalogue public, panier sans jeton → 401, client sur `/api/admin/**` → 403, admin → 200, **IDOR** : l'ordre d'un autre client → 404, validation → `errors` par champ, `/v3/api-docs` servi |
 | `CheckoutTest` | Réservation du stock, TVA/livraison (98,00 → 127,50 ; 196,00 → frais de port 0), survente refusée sans réservation partielle, cycle complet du panier |
 | `LoginRateLimitTest` | 429 + `Retry-After` + `problem+json` au-delà du quota, `/auth/register` non compté |
+| `RefreshTokenFlowTest` | Cookie `HttpOnly`/`SameSite=Strict`/`Path=/api/auth`, rotation à chaque refresh, refresh token refusé comme `Bearer` et inversement, absence de cookie → 401, `X-XSRF-TOKEN` manquant → 403, logout accepté sans CSRF → cookie expiré |
 | `JwtSecretGuardTest` | Démarrage refusé sans `JWT_SECRET` ou sous 256 bits, et absence de repli dans le profil par défaut |
 | `DataSeedSmokeTest` | Le seed utilisateurs/catégories/produits s'exécute |
 | `MySqlSchemaMigrationIT` | Flyway applique `V1__baseline_schema.sql` sur un vrai MySQL 8, puis Hibernate valide chaque entité contre le schéma obtenu. Sauté hors `MYSQL_IT=true` (exécuté par le job `mysql-schema` de la CI) |
@@ -268,17 +273,17 @@ cd backend && mvn clean package    # jar dans backend/target/ (les tests s'exéc
 - **Secret de signature** : plus aucun repli en profil par défaut ; `JWT_SECRET` est requis au démarrage et doit faire ≥ 32 octets.
 - **Autorisation vérifiée par tests** : IDOR sur les commandes, séparation client/admin, ouverture assumée du catalogue.
 - **Cohérence du stock** : verrouillage optimiste + retry borné.
-- **Jetons** : toujours stockés en `localStorage` côté React, donc exposés au XSS. La migration vers un cookie `HttpOnly` pour le refresh token (et l'accès en mémoire) est le prochain chantier de sécurité ; CSRF reste désactivé car seules les en-têtes `Authorization` portent l'identité.
+- **Session** : le refresh token ne quitte jamais le serveur que dans le cookie `LUXEMART_REFRESH` (`HttpOnly`, `SameSite=Strict`, `Path=/api/auth`, `Secure` hors `dev`), roté à chaque `/auth/refresh`. L'access token vit en mémoire dans le module `lib/api.ts` et n'est jamais écrit dans `localStorage` : une injection XSS n'a plus de jeton long durée à lire. `POST /auth/refresh` exige l'en-tête `X-XSRF-TOKEN` que le front recopie du cookie posé par `GET /auth/csrf` (jeton en clair, handler `CsrfTokenRequestAttributeHandler`) ; `POST /auth/logout` en est volontairement dispensé — un refus CSRF y laisserait la session vivante, et ce call ne peut que purger le cookie de son propre appelant. Le reste de l'API reste hors CSRF puisqu'il n'accepte que l'en-tête `Authorization`, qu'un site tiers ne peut pas produire.
+- **Ce que la session ne couvre pas encore** : aucune révocation côté serveur (le `jti` du refresh token n'est stocké nulle part, pas de version de jeton en base), donc un refresh cookie volé reste valide jusqu'à son expiration — la détection de réutilisation et la liste de révocation en Redis sont la suite logique. La suppression de compte n'invalide pas non plus les jetons émis.
 - **Paiement simulé** : aucune passerelle (Stripe/PayPal), `paymentStatus` reste `PENDING` tant qu'un webhook n'existe pas.
 - **Images produits** : URLs externes (Unsplash), pas d'endpoint d'upload malgré la limite multipart de 10 MB configurée.
 - **Pas de journal d'audit, ni de rôles intermédiaires** : un seul rôle `ROLE_ADMIN`.
 
 ## Roadmap court terme
 
-1. Cookies `HttpOnly` pour le refresh token + rotation, access token en mémoire
-2. Stripe Payment Intents + webhooks idempotents, emails transactionnels, mot de passe oublié
-3. Panier invité + coupons, recherche facettes, Redis pour le catalogue et les compteurs de rate limiting
-4. Journal d'audit, rôles fins, machine à états stricte sur les commandes
+1. Stripe Payment Intents + webhooks idempotents, emails transactionnels, mot de passe oublié
+2. Panier invité + coupons, recherche facettes, Redis pour le catalogue, les compteurs de rate limiting et la révocation des refresh tokens
+3. Journal d'audit, rôles fins, machine à états stricte sur les commandes
 
 ## Remote
 

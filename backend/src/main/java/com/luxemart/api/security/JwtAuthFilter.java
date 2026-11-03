@@ -29,16 +29,18 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         if (StringUtils.hasText(token) && SecurityContextHolder.getContext().getAuthentication() == null) {
             try {
-                String username = jwtService.extractUsername(token);
-                Long userId = jwtService.extractUserId(token);
-                UserDetails userDetails = userDetailsService.loadUserByUsername(username);
+                // A refresh token is long lived and lives in a cookie; it must never open the API by itself.
+                if (jwtService.isAccessToken(token)) {
+                    String username = jwtService.extractUsername(token);
+                    UserDetails userDetails = userDetailsService.loadUserByUsername(username);
 
-                if (jwtService.isTokenValid(token, userDetails)) {
-                    UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
-                        userDetails, null, userDetails.getAuthorities()
-                    );
-                    authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                    SecurityContextHolder.getContext().setAuthentication(authToken);
+                    if (jwtService.isTokenValid(token, userDetails)) {
+                        UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
+                            userDetails, null, userDetails.getAuthorities()
+                        );
+                        authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                        SecurityContextHolder.getContext().setAuthentication(authToken);
+                    }
                 }
             } catch (Exception ex) {
                 // Invalid or expired token — let the request proceed without authentication

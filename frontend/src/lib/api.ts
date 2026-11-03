@@ -1,28 +1,119 @@
-import axios, { AxiosError } from 'axios';
+import axios, { AxiosError, type AxiosRequestConfig } from 'axios';
 import { Address, AuthResponse, StoreConfig } from '@/types';
+
+/**
+ * The access token lives in this module's memory only — never in localStorage — so an XSS payload has
+ * nothing to read off disk. The refresh token is an HttpOnly cookie the SPA cannot even see: a page
+ * reload trades that cookie for a new access token, and an expired access token is refreshed in place.
+ */
+let accessToken: string | null = null;
+let sessionExpiredHandler: (() => void) | null = null;
+let cachedCsrfToken: string | null = null;
+
+export function setAccessToken(token: string | null) {
+  accessToken = token;
+}
+
+export function onSessionExpired(handler: () => void) {
+  sessionExpiredHandler = handler;
+}
+
+function readCsrfCookie(): string | null {
+  const match = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+/**
+ * The cookie is the authority when the browser already has it; otherwise the token is asked of the API,
+ * which writes the cookie. Cached so a request fired in the same tick as `bootstrap()` does not race an
+ * unreadable cookie and get rejected with 403.
+ */
+async function csrfToken(): Promise<string | null> {
+  const fromCookie = readCsrfCookie();
+  if (fromCookie) {
+    cachedCsrfToken = fromCookie;
+    return fromCookie;
+  }
+  if (!cachedCsrfToken) {
+    cachedCsrfToken = (await api.get<{ token: string }>('/auth/csrf')).data.token;
+  }
+  return cachedCsrfToken;
+}
+
+function forgetCsrfToken() {
+  document.cookie = 'XSRF-TOKEN=; path=/; max-age=0';
+  cachedCsrfToken = null;
+}
 
 const api = axios.create({
   baseURL: '/api',
+  withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 });
 
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+api.interceptors.request.use(async (config) => {
+  if (accessToken) {
+    config.headers.Authorization = `Bearer ${accessToken}`;
+  }
+  const method = (config.method ?? 'get').toLowerCase();
+  if (method !== 'get' && method !== 'head' && method !== 'options') {
+    const token = await csrfToken();
+    if (token) {
+      config.headers['X-XSRF-TOKEN'] = token;
+    }
   }
   return config;
 });
 
+type RetriableConfig = AxiosRequestConfig & { retriedAfterRefresh?: boolean; retriedAfterCsrfReset?: boolean };
+
+/** Single-flight: a burst of 401s must produce one refresh call, not one per request. */
+let pendingRefresh: Promise<string | null> | null = null;
+
+function refreshSession(): Promise<string | null> {
+  if (!pendingRefresh) {
+    pendingRefresh = api
+      .post<AuthResponse>('/auth/refresh')
+      .then((res) => {
+        accessToken = res.data.token;
+        return accessToken;
+      })
+      .catch(() => {
+        accessToken = null;
+        return null;
+      })
+      .finally(() => {
+        pendingRefresh = null;
+      });
+  }
+  return pendingRefresh;
+}
+
 api.interceptors.response.use(
   (res) => res,
-  (err) => {
-    if (err.response?.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      if (!window.location.pathname.startsWith('/login')) {
-        window.location.href = '/login';
+  async (err: AxiosError) => {
+    const config = err.config as RetriableConfig | undefined;
+    const url = config?.url ?? '';
+    const isAuthHandshake = url.includes('/auth/refresh') || url.includes('/auth/login');
+    const isCookieAuthenticated = url.startsWith('/auth/');
+
+    if (
+      err.response?.status === 403 &&
+      config &&
+      isCookieAuthenticated &&
+      !config.retriedAfterCsrfReset
+    ) {
+      config.retriedAfterCsrfReset = true;
+      forgetCsrfToken();
+      return api.request(config);
+    }
+
+    if (err.response?.status === 401 && config && !config.retriedAfterRefresh && !isAuthHandshake) {
+      config.retriedAfterRefresh = true;
+      if (await refreshSession()) {
+        return api.request(config);
       }
+      sessionExpiredHandler?.();
     }
     return Promise.reject(err);
   }
@@ -33,10 +124,18 @@ export const store = {
 };
 
 export const auth = {
+  /** Materializes the CSRF cookie that the refresh call has to echo back, and caches its token. */
+  bootstrap: async () => {
+    const res = await api.get<{ token: string }>('/auth/csrf');
+    cachedCsrfToken = res.data.token;
+    return res;
+  },
   login: (email: string, password: string) =>
     api.post<AuthResponse>('/auth/login', { email, password }),
   register: (data: { firstName: string; lastName: string; email: string; password: string; phone?: string }) =>
     api.post<AuthResponse>('/auth/register', data),
+  refresh: () => api.post<AuthResponse>('/auth/refresh'),
+  logout: () => api.post('/auth/logout'),
 };
 
 export const products = {

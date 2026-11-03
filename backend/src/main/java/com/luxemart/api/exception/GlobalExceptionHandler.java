@@ -38,6 +38,11 @@ public class GlobalExceptionHandler {
         return problem(HttpStatus.UNAUTHORIZED, "Unauthorized", "Invalid email or password");
     }
 
+    @ExceptionHandler(InvalidRefreshTokenException.class)
+    public ProblemDetail handleInvalidRefreshToken(InvalidRefreshTokenException ex) {
+        return problem(HttpStatus.UNAUTHORIZED, "Unauthorized", "Invalid refresh token");
+    }
+
     @ExceptionHandler(AccessDeniedException.class)
     public ProblemDetail handleAccessDenied(AccessDeniedException ex) {
         return problem(HttpStatus.FORBIDDEN, "Forbidden", "Insufficient privileges");
